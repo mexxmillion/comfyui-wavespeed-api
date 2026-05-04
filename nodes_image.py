@@ -1,0 +1,211 @@
+import random
+from . import api, pricing
+
+# ── Shared helpers ─────────────────────────────────────────────────────────────
+
+ASPECT_RATIOS = ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "4:5", "5:4", "21:9"]
+
+SEEDREAM_SIZES = [
+    "1024×1024 (1:1)",
+    "1280×720 (16:9)",
+    "720×1280 (9:16)",
+    "1024×1536 (2:3)",
+    "1536×1024 (3:2)",
+    "2048×2048 (1:1)",
+    "1920×1080 (16:9)",
+    "1080×1920 (9:16)",
+    "2048×1152 (16:9)",
+    "1152×2048 (9:16)",
+]
+
+SEEDREAM_SIZE_MAP = {
+    "1024×1024 (1:1)":  (1024, 1024),
+    "1280×720 (16:9)":  (1280, 720),
+    "720×1280 (9:16)":  (720,  1280),
+    "1024×1536 (2:3)":  (1024, 1536),
+    "1536×1024 (3:2)":  (1536, 1024),
+    "2048×2048 (1:1)":  (2048, 2048),
+    "1920×1080 (16:9)": (1920, 1080),
+    "1080×1920 (9:16)": (1080, 1920),
+    "2048×1152 (16:9)": (2048, 1152),
+    "1152×2048 (9:16)": (1152, 2048),
+}
+
+def _resolve_seed(seed):
+    return random.randint(0, 2**31 - 1) if seed == -1 else seed
+
+def _run(model_path, payload, api_key):
+    task_id = api.submit(model_path, payload, api_key)
+    urls = api.poll(task_id, api_key)
+    if not urls:
+        raise RuntimeError("No outputs returned")
+    return urls
+
+
+# ── Nano Banana Image ──────────────────────────────────────────────────────────
+
+NANO_MODELS = [
+    "nano-banana-pro/edit-ultra",
+    "nano-banana-pro/edit",
+    "nano-banana-2/edit",
+    "nano-banana-2/edit-fast",
+]
+
+NANO_MODELS_T2I = [m.replace("/edit-ultra", "/text-to-image")
+                    .replace("/edit-fast", "/text-to-image")
+                    .replace("/edit", "/text-to-image")
+                   for m in NANO_MODELS]
+
+
+class WS_NanaBananaImage:
+    CATEGORY = "WaveSpeed API"
+    FUNCTION = "generate"
+    RETURN_TYPES = ("IMAGE", "STRING")
+    RETURN_NAMES = ("images", "cost")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "prompt":       ("STRING",  {"multiline": True, "default": ""}),
+                "model":        (NANO_MODELS,),
+                "resolution":   (["1k", "2k", "4k"],),
+                "aspect_ratio": (ASPECT_RATIOS,),
+                "num_images":   ("INT",    {"default": 1, "min": 1, "max": 4, "step": 1}),
+                "seed":         ("INT",    {"default": -1, "min": -1, "max": 2**31 - 1}),
+                "output_format":(["png", "jpeg"],),
+            },
+            "optional": {
+                "image": ("IMAGE",),
+            },
+        }
+
+    def generate(self, prompt, model, resolution, aspect_ratio, num_images,
+                 seed, output_format, image=None):
+        key = api.get_api_key()
+        if not key:
+            raise RuntimeError("No WaveSpeed API key found. Add it to .env as wavespeed= or WAVESPEED_API_KEY=")
+
+        resolved_seed = _resolve_seed(seed)
+
+        all_urls = []
+        for _ in range(num_images):
+            if image is not None:
+                # image-to-image: use /edit endpoint
+                pil = api.tensor_to_pil(image)
+                img_url = api.upload_image(pil, key)
+                endpoint = f"google/{model}"
+                # edit-ultra uses "images" array; others too
+                payload = {
+                    "images":        [img_url],
+                    "prompt":        prompt,
+                    "resolution":    resolution,
+                    "output_format": output_format,
+                    "seed":          resolved_seed,
+                }
+            else:
+                # text-to-image: swap endpoint suffix
+                t2i_model = (model.replace("/edit-ultra", "/text-to-image")
+                                  .replace("/edit-fast", "/text-to-image")
+                                  .replace("/edit", "/text-to-image"))
+                endpoint = f"google/{t2i_model}"
+                payload = {
+                    "prompt":        prompt,
+                    "aspect_ratio":  aspect_ratio,
+                    "resolution":    resolution,
+                    "output_format": output_format,
+                    "seed":          resolved_seed,
+                }
+
+            urls = _run(endpoint, payload, key)
+            all_urls.extend(urls)
+            resolved_seed += 1  # increment for next image
+
+        img_tensor = api.urls_to_tensor(all_urls)
+
+        full_model = f"google/{model}"
+        cost_str = pricing.image_cost_str(full_model, resolution, num_images)
+        return (img_tensor, cost_str)
+
+
+# ── Seedream Image ─────────────────────────────────────────────────────────────
+
+SEEDREAM_MODELS = [
+    "seedream-v5.0-lite/edit",
+    "seedream-v5.0-lite/edit-sequential",
+    "seedream-v4.5/edit",
+    "seedream-v4.5/edit-sequential",
+]
+
+def _seedream_res_tag(size_preset: str) -> str:
+    w, h = SEEDREAM_SIZE_MAP[size_preset]
+    if max(w, h) >= 2000:
+        return "4k"
+    if max(w, h) >= 1400:
+        return "2k"
+    return "1k"
+
+
+class WS_SeedreamImage:
+    CATEGORY = "WaveSpeed API"
+    FUNCTION = "generate"
+    RETURN_TYPES = ("IMAGE", "STRING")
+    RETURN_NAMES = ("images", "cost")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "prompt":      ("STRING",       {"multiline": True, "default": ""}),
+                "model":       (SEEDREAM_MODELS,),
+                "size_preset": (SEEDREAM_SIZES,),
+                "num_images":  ("INT",          {"default": 1, "min": 1, "max": 4, "step": 1}),
+                "seed":        ("INT",          {"default": 0, "min": 0, "max": 2**31 - 1}),
+                "watermark":   ("BOOLEAN",      {"default": False}),
+            },
+            "optional": {
+                "image": ("IMAGE",),
+            },
+        }
+
+    def generate(self, prompt, model, size_preset, num_images, seed, watermark, image=None):
+        key = api.get_api_key()
+        if not key:
+            raise RuntimeError("No WaveSpeed API key found.")
+
+        w, h = SEEDREAM_SIZE_MAP[size_preset]
+
+        all_urls = []
+        for i in range(num_images):
+            if image is not None:
+                pil = api.tensor_to_pil(image)
+                img_url = api.upload_image(pil, key)
+                payload = {
+                    "image":     img_url,
+                    "prompt":    prompt,
+                    "width":     w,
+                    "height":    h,
+                    "seed":      seed + i,
+                    "watermark": watermark,
+                }
+            else:
+                t2i_model = model.replace("/edit-sequential", "/text-to-image").replace("/edit", "/text-to-image")
+                model = t2i_model  # use t2i path when no image
+                payload = {
+                    "prompt":    prompt,
+                    "width":     w,
+                    "height":    h,
+                    "seed":      seed + i,
+                    "watermark": watermark,
+                }
+
+            endpoint = f"bytedance/{model}"
+            urls = _run(endpoint, payload, key)
+            all_urls.extend(urls)
+
+        img_tensor = api.urls_to_tensor(all_urls)
+
+        res_tag = _seedream_res_tag(size_preset)
+        full_model = f"bytedance/{model}"
+        cost_str = pricing.image_cost_str(full_model, res_tag, num_images)
+        return (img_tensor, cost_str)
