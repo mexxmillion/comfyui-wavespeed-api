@@ -1,10 +1,65 @@
+import os
 import random
+import time
+
+import requests
+import folder_paths  # type: ignore - provided by ComfyUI runtime
+
 from . import api, pricing
+
 
 # ── Shared ─────────────────────────────────────────────────────────────────────
 
 def _resolve_seed(seed):
     return random.randint(0, 2**31 - 1) if seed == -1 else seed
+
+
+def _download_video(url: str, prefix: str = "wavespeed") -> tuple[str, str, str]:
+    """Download a video URL into ComfyUI's output dir.
+    Returns (full_path, filename, subfolder)."""
+    out_dir = folder_paths.get_output_directory()
+    subfolder = "wavespeed"
+    target_dir = os.path.join(out_dir, subfolder)
+    os.makedirs(target_dir, exist_ok=True)
+
+    timestamp = int(time.time() * 1000)
+    filename = f"{prefix}_{timestamp}.mp4"
+    full_path = os.path.join(target_dir, filename)
+
+    print(f"[WaveSpeed] Downloading video → {full_path}")
+    resp = requests.get(url, stream=True, timeout=300)
+    resp.raise_for_status()
+    with open(full_path, "wb") as f:
+        for chunk in resp.iter_content(chunk_size=65536):
+            f.write(chunk)
+    print(f"[WaveSpeed] Saved video ({os.path.getsize(full_path) / 1024 / 1024:.1f} MB)")
+    return full_path, filename, subfolder
+
+
+def _wrap_video(filepath: str):
+    """Wrap a path as a ComfyUI VIDEO object if available, else None."""
+    try:
+        from comfy_api.input_impl import VideoFromFile
+        return VideoFromFile(filepath)
+    except Exception as e:
+        print(f"[WaveSpeed] VideoFromFile unavailable: {e}")
+        return None
+
+
+def _video_node_output(filepath: str, filename: str, subfolder: str,
+                       cost_str: str, url: str):
+    """Return the standard (ui+result) dict for a video-producing node."""
+    video_obj = _wrap_video(filepath)
+    return {
+        "ui": {
+            "images": [{
+                "filename": filename,
+                "subfolder": subfolder,
+                "type": "output",
+            }]
+        },
+        "result": (video_obj, filepath, cost_str, url),
+    }
 
 
 # ── Kling Video ────────────────────────────────────────────────────────────────
@@ -20,14 +75,14 @@ KLING_VERSIONS = [
 ]
 
 KLING_ASPECT_RATIOS = ["16:9", "9:16", "1:1"]
-KLING_DURATIONS     = [3, 5, 6, 8, 10, 12, 15]
 
 
 class WS_KlingVideo:
     CATEGORY = "WaveSpeed API"
     FUNCTION = "generate"
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("video_url", "cost")
+    RETURN_TYPES = ("VIDEO", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("video", "video_path", "cost", "url")
+    OUTPUT_NODE = True
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -38,8 +93,8 @@ class WS_KlingVideo:
                 "model":           (KLING_VERSIONS,),
                 "aspect_ratio":    (KLING_ASPECT_RATIOS,),
                 "duration":        (["5", "10", "3", "6", "8", "12", "15"],),
-                "cfg_scale":       ("FLOAT",  {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
-                "seed":            ("INT",    {"default": -1, "min": -1, "max": 2**31 - 1}),
+                "cfg_scale":       ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "seed":            ("INT",   {"default": -1, "min": -1, "max": 2**31 - 1}),
             },
             "optional": {
                 "start_frame": ("IMAGE",),
@@ -86,37 +141,35 @@ class WS_KlingVideo:
             raise RuntimeError("No video URL returned")
 
         video_url = urls[0]
-        full_model = f"kwaivgi/{model}/{task_type}"
-        cost_str = pricing.video_cost_str(full_model, duration_int)
-        return (video_url, cost_str)
+        full_path, filename, subfolder = _download_video(video_url, prefix=f"kling_{model.replace('.', '_')}")
+        cost_str = pricing.video_cost_str(f"kwaivgi/{model}/{task_type}", duration_int)
+
+        return _video_node_output(full_path, filename, subfolder, cost_str, video_url)
 
 
 # ── Seedance Video ─────────────────────────────────────────────────────────────
 
-SEEDANCE_MODELS = [
-    "seedance-2.0",
-    "seedance-2.0-fast",
-]
-
+SEEDANCE_MODELS = ["seedance-2.0", "seedance-2.0-fast"]
 SEEDANCE_RESOLUTIONS = ["1080p", "720p", "480p"]
 
 
 class WS_SeedanceVideo:
     CATEGORY = "WaveSpeed API"
     FUNCTION = "generate"
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("video_url", "cost")
+    RETURN_TYPES = ("VIDEO", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("video", "video_path", "cost", "url")
+    OUTPUT_NODE = True
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "prompt":      ("STRING", {"multiline": True, "default": ""}),
-                "model":       (SEEDANCE_MODELS,),
-                "resolution":  (SEEDANCE_RESOLUTIONS,),
-                "duration":    (["5", "10", "3", "7"],),
-                "turbo":       ("BOOLEAN", {"default": False, "label_on": "Turbo", "label_off": "Standard"}),
-                "seed":        ("INT",    {"default": -1, "min": -1, "max": 2**31 - 1}),
+                "prompt":     ("STRING", {"multiline": True, "default": ""}),
+                "model":      (SEEDANCE_MODELS,),
+                "resolution": (SEEDANCE_RESOLUTIONS,),
+                "duration":   (["5", "10", "3", "7"],),
+                "turbo":      ("BOOLEAN", {"default": False, "label_on": "Turbo", "label_off": "Standard"}),
+                "seed":       ("INT",     {"default": -1, "min": -1, "max": 2**31 - 1}),
             },
             "optional": {
                 "image": ("IMAGE",),
@@ -159,31 +212,26 @@ class WS_SeedanceVideo:
             raise RuntimeError("No video URL returned")
 
         video_url = urls[0]
-        full_model = f"bytedance/{model}/{task_type}"
-        cost_str = pricing.video_cost_str(full_model, duration_int)
-        return (video_url, cost_str)
+        full_path, filename, subfolder = _download_video(video_url, prefix=f"seedance_{model.replace('.', '_')}")
+        cost_str = pricing.video_cost_str(f"bytedance/{model}/{task_type}", duration_int)
+
+        return _video_node_output(full_path, filename, subfolder, cost_str, video_url)
 
 
-# ── Load Video URL ─────────────────────────────────────────────────────────────
-# Saves a remote video URL to ComfyUI's output dir and returns the filepath.
-
-import os
-import urllib.request
-import folder_paths  # type: ignore – available at ComfyUI runtime
-
+# ── Load Video URL (kept for manual use / chaining) ────────────────────────────
 
 class WS_LoadVideoURL:
     CATEGORY = "WaveSpeed API"
     FUNCTION = "load"
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("video_path",)
+    RETURN_TYPES = ("VIDEO", "STRING")
+    RETURN_NAMES = ("video", "video_path")
     OUTPUT_NODE = True
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "video_url": ("STRING", {"default": ""}),
+                "video_url":       ("STRING", {"default": "", "multiline": False}),
                 "filename_prefix": ("STRING", {"default": "wavespeed_video"}),
             }
         }
@@ -192,24 +240,11 @@ class WS_LoadVideoURL:
         if not video_url:
             raise RuntimeError("No video URL provided")
 
-        output_dir = folder_paths.get_output_directory()
-        ext = ".mp4"
-        # find next available filename
-        idx = 1
-        while True:
-            fname = f"{filename_prefix}_{idx:04d}{ext}"
-            fpath = os.path.join(output_dir, fname)
-            if not os.path.exists(fpath):
-                break
-            idx += 1
-
-        print(f"[WaveSpeed] Downloading video → {fpath}")
-        import requests as _req
-        resp = _req.get(video_url, timeout=120, stream=True)
-        resp.raise_for_status()
-        with open(fpath, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=65536):
-                f.write(chunk)
-
-        print(f"[WaveSpeed] Saved: {fpath}")
-        return (fpath,)
+        full_path, filename, subfolder = _download_video(video_url, prefix=filename_prefix)
+        video_obj = _wrap_video(full_path)
+        return {
+            "ui": {
+                "images": [{"filename": filename, "subfolder": subfolder, "type": "output"}]
+            },
+            "result": (video_obj, full_path),
+        }
