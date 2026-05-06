@@ -53,6 +53,12 @@ VIDEO_COSTS_PER_SEC = {
     "kwaivgi/kling-v2.5-turbo-std/image-to-video":  0.060,
     "kwaivgi/kling-v2.5-turbo-pro/text-to-video":   0.100,
     "kwaivgi/kling-v2.5-turbo-pro/image-to-video":  0.100,
+    # ── Kling Motion Control ──────────────────────────────────────────────────
+    # Billed per second (some variants round to 3-second chunks server-side).
+    "kwaivgi/kling-v2.6-std/motion-control":  0.070,
+    "kwaivgi/kling-v2.6-pro/motion-control":  0.112,
+    "kwaivgi/kling-v3.0-std/motion-control":  0.126,
+    "kwaivgi/kling-v3.0-pro/motion-control":  0.200,  # estimate (no public rate)
 }
 
 

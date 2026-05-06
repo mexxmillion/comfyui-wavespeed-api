@@ -218,6 +218,82 @@ class WS_SeedanceVideo:
         return _video_node_output(full_path, filename, subfolder, cost_str, video_url)
 
 
+# ── Kling Motion Control ───────────────────────────────────────────────────────
+
+KLING_MOTION_MODELS = [
+    "kling-v2.6-std",
+    "kling-v2.6-pro",
+    "kling-v3.0-std",
+    "kling-v3.0-pro",
+]
+
+KLING_MOTION_ORIENTATIONS = ["front", "side", "back"]
+
+
+class WS_KlingMotionControl:
+    """Transfer motion from a driving video onto a character image (Kling motion-control)."""
+    CATEGORY = "WaveSpeed API"
+    FUNCTION = "generate"
+    RETURN_TYPES = ("VIDEO", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("video", "video_path", "cost", "url")
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "character_image":      ("IMAGE",),
+                "motion_video":         ("VIDEO",),
+                "model":                (KLING_MOTION_MODELS,),
+                "character_orientation": (KLING_MOTION_ORIENTATIONS,),
+                "duration":             ("INT", {"default": 5, "min": 3, "max": 30, "step": 1,
+                                                  "tooltip": "Estimated output length in seconds — used for cost display only; actual length is set by motion video"}),
+                "keep_original_sound":  ("BOOLEAN", {"default": True}),
+                "prompt":               ("STRING", {"multiline": True, "default": ""}),
+                "negative_prompt":      ("STRING", {"multiline": True, "default": ""}),
+            },
+        }
+
+    def generate(self, character_image, motion_video, model, character_orientation,
+                 duration, keep_original_sound, prompt, negative_prompt):
+        key = api.get_api_key()
+        if not key:
+            raise RuntimeError("No WaveSpeed API key found.")
+
+        # Upload character image
+        pil = api.tensor_to_pil(character_image)
+        image_url = api.upload_image(pil, key)
+
+        # Upload motion video
+        video_path_local = api.video_input_to_path(motion_video)
+        print(f"[WaveSpeed] Uploading motion video: {video_path_local}")
+        video_url_in = api.upload_video_path(video_path_local, key)
+
+        endpoint = f"kwaivgi/{model}/motion-control"
+        payload = {
+            "image":                 image_url,
+            "video":                 video_url_in,
+            "character_orientation": character_orientation,
+            "keep_original_sound":   keep_original_sound,
+        }
+        if prompt:
+            payload["prompt"] = prompt
+        if negative_prompt:
+            payload["negative_prompt"] = negative_prompt
+
+        task_id = api.submit(endpoint, payload, key)
+        urls = api.poll(task_id, key, timeout=900)
+        if not urls:
+            raise RuntimeError("No video URL returned")
+
+        out_url = urls[0]
+        full_path, filename, subfolder = _download_video(
+            out_url, prefix=f"klingmotion_{model.replace('.', '_')}"
+        )
+        cost_str = pricing.video_cost_str(endpoint, int(duration))
+        return _video_node_output(full_path, filename, subfolder, cost_str, out_url)
+
+
 # ── Load Video URL (kept for manual use / chaining) ────────────────────────────
 
 class WS_LoadVideoURL:

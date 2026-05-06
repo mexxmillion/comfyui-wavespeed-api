@@ -25,14 +25,22 @@ const VIDEO_COSTS = {
   "bytedance/seedance-2.0-fast":  0.075,
 };
 
+const MOTION_CONTROL_COSTS = {
+  "kwaivgi/kling-v2.6-std": 0.070,
+  "kwaivgi/kling-v2.6-pro": 0.112,
+  "kwaivgi/kling-v3.0-std": 0.126,
+  "kwaivgi/kling-v3.0-pro": 0.200,
+};
+
 // ── Node colours ───────────────────────────────────────────────────────────────
 
 const NODE_COLORS = {
   WS_NanaBananaImage: { color: "#1a2b1a", bgcolor: "#253525" },
   WS_SeedreamImage:   { color: "#1a1a2e", bgcolor: "#252540" },
-  WS_KlingVideo:      { color: "#2b1a1a", bgcolor: "#3d2525" },
-  WS_SeedanceVideo:   { color: "#2b1f0f", bgcolor: "#3d2d10" },
-  WS_LoadVideoURL:    { color: "#1a1f2b", bgcolor: "#252d3d" },
+  WS_KlingVideo:         { color: "#2b1a1a", bgcolor: "#3d2525" },
+  WS_KlingMotionControl: { color: "#2e1530", bgcolor: "#3d1d40" },
+  WS_SeedanceVideo:      { color: "#2b1f0f", bgcolor: "#3d2d10" },
+  WS_LoadVideoURL:       { color: "#1a1f2b", bgcolor: "#252d3d" },
 };
 
 // ── Badge drawing ──────────────────────────────────────────────────────────────
@@ -109,6 +117,14 @@ function klingCost(node) {
   return `$${rate.toFixed(3)}/s × ${duration}s = $${total.toFixed(3)}`;
 }
 
+function klingMotionCost(node) {
+  const model    = getW(node, "model")    ?? "";
+  const duration = parseInt(getW(node, "duration") ?? "5");
+  const rate     = MOTION_CONTROL_COSTS[`kwaivgi/${model}`] ?? 0;
+  const total    = rate * duration;
+  return `$${rate.toFixed(3)}/s × ${duration}s ≈ $${total.toFixed(3)}`;
+}
+
 function seedanceCost(node) {
   const model    = getW(node, "model")    ?? "";
   const duration = parseInt(getW(node, "duration") ?? "5");
@@ -122,10 +138,11 @@ function seedanceCost(node) {
 // ── Register extension ─────────────────────────────────────────────────────────
 
 const COST_FN = {
-  WS_NanaBananaImage: nanaBananaCost,
-  WS_SeedreamImage:   seedreamCost,
-  WS_KlingVideo:      klingCost,
-  WS_SeedanceVideo:   seedanceCost,
+  WS_NanaBananaImage:    nanaBananaCost,
+  WS_SeedreamImage:      seedreamCost,
+  WS_KlingVideo:         klingCost,
+  WS_KlingMotionControl: klingMotionCost,
+  WS_SeedanceVideo:      seedanceCost,
 };
 
 app.registerExtension({

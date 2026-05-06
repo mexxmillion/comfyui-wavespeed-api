@@ -103,6 +103,51 @@ def upload_image(pil_image: Image.Image, api_key: str) -> str:
     return data["data"]["download_url"]
 
 
+def upload_video_path(video_path: str, api_key: str) -> str:
+    """Upload a local mp4 file to WaveSpeed media storage and return the public URL."""
+    url = f"{BASE_URL}/api/v2/media/upload/binary"
+    with open(video_path, "rb") as f:
+        resp = requests.post(
+            url,
+            headers={"Authorization": f"Bearer {api_key}"},
+            files={"file": ("video.mp4", f, "video/mp4")},
+            timeout=600,
+        )
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("code") != 200:
+        raise RuntimeError(f"Video upload failed: {data.get('message')}")
+    return data["data"]["download_url"]
+
+
+def video_input_to_path(video) -> str:
+    """Convert a ComfyUI VIDEO input (VideoFromFile or path string) to a local mp4 path.
+    If the source is not already an mp4 on disk, save it to a temp mp4 first."""
+    import tempfile
+    # Plain string path
+    if isinstance(video, str):
+        return video
+    # VideoFromFile-like object: try common attributes
+    for attr in ("_file", "file", "path", "filepath"):
+        val = getattr(video, attr, None)
+        if isinstance(val, str) and os.path.exists(val):
+            return val
+    # Fallback: use save_to() to write a temp mp4
+    if hasattr(video, "save_to"):
+        tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        tmp.close()
+        try:
+            try:
+                from comfy_api.latest._util import VideoContainer
+                video.save_to(tmp.name, format=VideoContainer.MP4)
+            except Exception:
+                video.save_to(tmp.name)
+            return tmp.name
+        except Exception as e:
+            raise RuntimeError(f"Failed to materialize video to file: {e}")
+    raise RuntimeError(f"Unsupported video input type: {type(video)}")
+
+
 def tensor_to_pil(image_tensor) -> Image.Image:
     # ComfyUI IMAGE: [B, H, W, C] float32 0-1
     if image_tensor.dim() == 4:
