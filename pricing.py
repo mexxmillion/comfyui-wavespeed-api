@@ -21,6 +21,21 @@ IMAGE_COSTS = {
     "bytedance/seedream-v5.0-lite/edit-sequential": {"1k": 0.035, "2k": 0.05, "4k": 0.07},
 }
 
+# GPT Image 2: cost depends on quality AND resolution (and edit costs more at "low").
+# Indexed as (endpoint -> quality -> resolution -> $).
+GPT_IMAGE_COSTS = {
+    "openai/gpt-image-2/text-to-image": {
+        "low":    {"1k": 0.010, "2k": 0.020, "4k": 0.030},
+        "medium": {"1k": 0.060, "2k": 0.120, "4k": 0.180},
+        "high":   {"1k": 0.220, "2k": 0.440, "4k": 0.660},
+    },
+    "openai/gpt-image-2/edit": {
+        "low":    {"1k": 0.030, "2k": 0.060, "4k": 0.090},
+        "medium": {"1k": 0.060, "2k": 0.120, "4k": 0.180},
+        "high":   {"1k": 0.220, "2k": 0.440, "4k": 0.660},
+    },
+}
+
 # Video: cost per second of output video
 VIDEO_COSTS_PER_SEC = {
     # ── Seedance 2.0 ──────────────────────────────────────────────────────────
@@ -75,3 +90,11 @@ def video_cost_str(model_path: str, duration_sec: int) -> str:
     rate = VIDEO_COSTS_PER_SEC.get(model_path, 0.0)
     total = rate * duration_sec
     return f"${rate:.3f}/s × {duration_sec}s = ${total:.3f}"
+
+
+def gpt_image_cost_str(endpoint: str, quality: str, resolution: str, num_images: int = 1) -> str:
+    unit = GPT_IMAGE_COSTS.get(endpoint, {}).get(quality, {}).get(resolution, 0.0)
+    total = unit * num_images
+    if num_images > 1:
+        return f"${unit:.3f}/img × {num_images} = ${total:.3f}  ({quality} {resolution})"
+    return f"${unit:.3f}/image  ({quality} {resolution})"

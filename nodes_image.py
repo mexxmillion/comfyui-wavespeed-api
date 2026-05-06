@@ -209,3 +209,75 @@ class WS_SeedreamImage:
         full_model = f"bytedance/{model}"
         cost_str = pricing.image_cost_str(full_model, res_tag, num_images)
         return (img_tensor, cost_str)
+
+
+# ── GPT Image 2 ────────────────────────────────────────────────────────────────
+
+GPT_QUALITIES = ["medium", "low", "high"]
+GPT_RESOLUTIONS = ["1k", "2k", "4k"]
+
+
+class WS_GPTImage2:
+    """OpenAI GPT Image 2 — text-to-image (no image input) or edit (one+ image inputs).
+    Up to 4 reference images can be supplied to the edit endpoint."""
+    CATEGORY = "WaveSpeed API"
+    FUNCTION = "generate"
+    RETURN_TYPES = ("IMAGE", "STRING")
+    RETURN_NAMES = ("images", "cost")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "prompt":       ("STRING", {"multiline": True, "default": ""}),
+                "quality":      (GPT_QUALITIES,),
+                "resolution":   (GPT_RESOLUTIONS,),
+                "aspect_ratio": (ASPECT_RATIOS,),
+                "num_images":   ("INT", {"default": 1, "min": 1, "max": 4, "step": 1}),
+                "seed":         ("INT", {"default": -1, "min": -1, "max": 2**31 - 1}),
+            },
+            "optional": {
+                "image_1": ("IMAGE",),
+                "image_2": ("IMAGE",),
+                "image_3": ("IMAGE",),
+                "image_4": ("IMAGE",),
+            },
+        }
+
+    def generate(self, prompt, quality, resolution, aspect_ratio, num_images, seed,
+                 image_1=None, image_2=None, image_3=None, image_4=None):
+        key = api.get_api_key()
+        if not key:
+            raise RuntimeError("No WaveSpeed API key found.")
+
+        # Collect any provided reference images
+        ref_imgs = [t for t in (image_1, image_2, image_3, image_4) if t is not None]
+
+        # Upload references once (reuse URLs across all num_images)
+        ref_urls = []
+        if ref_imgs:
+            for tensor in ref_imgs:
+                pil = api.tensor_to_pil(tensor)
+                ref_urls.append(api.upload_image(pil, key))
+
+        is_edit = len(ref_urls) > 0
+        endpoint = "openai/gpt-image-2/edit" if is_edit else "openai/gpt-image-2/text-to-image"
+
+        resolved_seed = _resolve_seed(seed)
+        all_urls = []
+        for i in range(num_images):
+            payload = {
+                "prompt":       prompt,
+                "aspect_ratio": aspect_ratio,
+                "resolution":   resolution,
+                "quality":      quality,
+            }
+            if is_edit:
+                payload["images"] = ref_urls
+            urls = _run(endpoint, payload, key)
+            all_urls.extend(urls)
+            resolved_seed += 1
+
+        img_tensor = api.urls_to_tensor(all_urls)
+        cost_str = pricing.gpt_image_cost_str(endpoint, quality, resolution, num_images)
+        return (img_tensor, cost_str)

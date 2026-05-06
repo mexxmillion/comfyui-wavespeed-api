@@ -32,11 +32,26 @@ const MOTION_CONTROL_COSTS = {
   "kwaivgi/kling-v3.0-pro": 0.200,
 };
 
+// GPT Image 2: quality × resolution pricing (edit costs more at "low" tier than t2i)
+const GPT_IMAGE_COSTS = {
+  t2i: {
+    low:    { "1k": 0.010, "2k": 0.020, "4k": 0.030 },
+    medium: { "1k": 0.060, "2k": 0.120, "4k": 0.180 },
+    high:   { "1k": 0.220, "2k": 0.440, "4k": 0.660 },
+  },
+  edit: {
+    low:    { "1k": 0.030, "2k": 0.060, "4k": 0.090 },
+    medium: { "1k": 0.060, "2k": 0.120, "4k": 0.180 },
+    high:   { "1k": 0.220, "2k": 0.440, "4k": 0.660 },
+  },
+};
+
 // ── Node colours ───────────────────────────────────────────────────────────────
 
 const NODE_COLORS = {
-  WS_NanaBananaImage: { color: "#1a2b1a", bgcolor: "#253525" },
-  WS_SeedreamImage:   { color: "#1a1a2e", bgcolor: "#252540" },
+  WS_NanaBananaImage:    { color: "#1a2b1a", bgcolor: "#253525" },
+  WS_SeedreamImage:      { color: "#1a1a2e", bgcolor: "#252540" },
+  WS_GPTImage2:          { color: "#0f2a2a", bgcolor: "#173d3d" },
   WS_KlingVideo:         { color: "#2b1a1a", bgcolor: "#3d2525" },
   WS_KlingMotionControl: { color: "#2e1530", bgcolor: "#3d1d40" },
   WS_SeedanceVideo:      { color: "#2b1f0f", bgcolor: "#3d2d10" },
@@ -117,6 +132,22 @@ function klingCost(node) {
   return `$${rate.toFixed(3)}/s × ${duration}s = $${total.toFixed(3)}`;
 }
 
+function gptImage2Cost(node) {
+  const quality = getW(node, "quality")    ?? "medium";
+  const res     = getW(node, "resolution") ?? "1k";
+  const n       = getW(node, "num_images") ?? 1;
+  // Detect edit mode: any image_N input is connected
+  const isEdit  = ["image_1", "image_2", "image_3", "image_4"].some(
+    name => node.inputs?.find(i => i.name === name)?.link != null
+  );
+  const table = isEdit ? GPT_IMAGE_COSTS.edit : GPT_IMAGE_COSTS.t2i;
+  const unit  = table[quality]?.[res] ?? 0;
+  const total = unit * n;
+  const tag   = isEdit ? "edit" : "t2i";
+  if (n > 1) return `$${unit.toFixed(3)}/img × ${n} = $${total.toFixed(3)} (${tag} ${quality} ${res})`;
+  return `$${unit.toFixed(3)}/image (${tag} ${quality} ${res})`;
+}
+
 function klingMotionCost(node) {
   const model    = getW(node, "model")    ?? "";
   const duration = parseInt(getW(node, "duration") ?? "5");
@@ -140,6 +171,7 @@ function seedanceCost(node) {
 const COST_FN = {
   WS_NanaBananaImage:    nanaBananaCost,
   WS_SeedreamImage:      seedreamCost,
+  WS_GPTImage2:          gptImage2Cost,
   WS_KlingVideo:         klingCost,
   WS_KlingMotionControl: klingMotionCost,
   WS_SeedanceVideo:      seedanceCost,
