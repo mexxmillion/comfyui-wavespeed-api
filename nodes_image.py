@@ -58,6 +58,9 @@ NANO_MODELS_T2I = [m.replace("/edit-ultra", "/text-to-image")
 
 
 class WS_NanaBananaImage:
+    """Nano Banana 2/Pro. Connect any of image_1..image_5 to switch to multi-ref edit mode
+    (Nano Banana 2 supports up to 5 consistent characters in one call).
+    Each output costs full price; multi-ref input is ONE call, ONE cost."""
     CATEGORY = "WaveSpeed API"
     FUNCTION = "generate"
     RETURN_TYPES = ("IMAGE", "STRING")
@@ -71,44 +74,57 @@ class WS_NanaBananaImage:
                 "model":        (NANO_MODELS,),
                 "resolution":   (["1k", "2k", "4k"],),
                 "aspect_ratio": (ASPECT_RATIOS,),
-                "num_images":   ("INT",    {"default": 1, "min": 1, "max": 4, "step": 1}),
+                "num_images":   ("INT",    {"default": 1, "min": 1, "max": 8, "step": 1,
+                                             "tooltip": "Number of variations — each is a separate API call (Nx cost)"}),
                 "seed":         ("INT",    {"default": -1, "min": -1, "max": 2**31 - 1}),
                 "output_format":(["png", "jpeg"],),
             },
             "optional": {
-                "image": ("IMAGE",),
+                "image_1": ("IMAGE",),
+                "image_2": ("IMAGE",),
+                "image_3": ("IMAGE",),
+                "image_4": ("IMAGE",),
+                "image_5": ("IMAGE",),
             },
         }
 
     def generate(self, prompt, model, resolution, aspect_ratio, num_images,
-                 seed, output_format, image=None):
+                 seed, output_format,
+                 image_1=None, image_2=None, image_3=None, image_4=None, image_5=None):
         key = api.get_api_key()
         if not key:
             raise RuntimeError("No WaveSpeed API key found. Add it to .env as wavespeed= or WAVESPEED_API_KEY=")
 
-        resolved_seed = _resolve_seed(seed)
+        # Collect reference images (any subset of the 5 inputs)
+        ref_tensors = [t for t in (image_1, image_2, image_3, image_4, image_5) if t is not None]
 
+        # Upload references ONCE, reuse URLs across all variations
+        ref_urls = []
+        for tensor in ref_tensors:
+            pil = api.tensor_to_pil(tensor)
+            ref_urls.append(api.upload_image(pil, key))
+
+        is_edit = len(ref_urls) > 0
+        if is_edit:
+            endpoint = f"google/{model}"
+        else:
+            t2i_model = (model.replace("/edit-ultra", "/text-to-image")
+                              .replace("/edit-fast", "/text-to-image")
+                              .replace("/edit", "/text-to-image"))
+            endpoint = f"google/{t2i_model}"
+
+        resolved_seed = _resolve_seed(seed)
         all_urls = []
         for _ in range(num_images):
-            if image is not None:
-                # image-to-image: use /edit endpoint
-                pil = api.tensor_to_pil(image)
-                img_url = api.upload_image(pil, key)
-                endpoint = f"google/{model}"
-                # edit-ultra uses "images" array; others too
+            if is_edit:
                 payload = {
-                    "images":        [img_url],
+                    "images":        ref_urls,
                     "prompt":        prompt,
                     "resolution":    resolution,
                     "output_format": output_format,
                     "seed":          resolved_seed,
                 }
             else:
-                # text-to-image: swap endpoint suffix
-                t2i_model = (model.replace("/edit-ultra", "/text-to-image")
-                                  .replace("/edit-fast", "/text-to-image")
-                                  .replace("/edit", "/text-to-image"))
-                endpoint = f"google/{t2i_model}"
                 payload = {
                     "prompt":        prompt,
                     "aspect_ratio":  aspect_ratio,
@@ -116,13 +132,11 @@ class WS_NanaBananaImage:
                     "output_format": output_format,
                     "seed":          resolved_seed,
                 }
-
             urls = _run(endpoint, payload, key)
             all_urls.extend(urls)
-            resolved_seed += 1  # increment for next image
+            resolved_seed += 1
 
         img_tensor = api.urls_to_tensor(all_urls)
-
         full_model = f"google/{model}"
         cost_str = pricing.image_cost_str(full_model, resolution, num_images)
         return (img_tensor, cost_str)
