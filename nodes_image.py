@@ -58,9 +58,11 @@ NANO_MODELS_T2I = [m.replace("/edit-ultra", "/text-to-image")
 
 
 class WS_NanaBananaImage:
-    """Nano Banana 2/Pro. Connect any of image_1..image_5 to switch to multi-ref edit mode
-    (Nano Banana 2 supports up to 5 consistent characters in one call).
-    Each output costs full price; multi-ref input is ONE call, ONE cost."""
+    """Nano Banana 2/Pro. Connect any of image_1..image_10 to switch to multi-ref edit mode.
+    NB2 accepts up to 8 reference images; NB Pro up to 14 (this node exposes 10 — covers
+    nearly all real workflows: ~5 characters + ~5 objects).
+    Multi-ref input = ONE call, ONE cost. num_images controls how many variations are
+    generated, each as a separate API call (Nx cost)."""
     CATEGORY = "WaveSpeed API"
     FUNCTION = "generate"
     RETURN_TYPES = ("IMAGE", "STRING")
@@ -80,23 +82,34 @@ class WS_NanaBananaImage:
                 "output_format":(["png", "jpeg"],),
             },
             "optional": {
-                "image_1": ("IMAGE",),
-                "image_2": ("IMAGE",),
-                "image_3": ("IMAGE",),
-                "image_4": ("IMAGE",),
-                "image_5": ("IMAGE",),
+                "image_1":  ("IMAGE",),
+                "image_2":  ("IMAGE",),
+                "image_3":  ("IMAGE",),
+                "image_4":  ("IMAGE",),
+                "image_5":  ("IMAGE",),
+                "image_6":  ("IMAGE",),
+                "image_7":  ("IMAGE",),
+                "image_8":  ("IMAGE",),
+                "image_9":  ("IMAGE",),
+                "image_10": ("IMAGE",),
             },
         }
 
     def generate(self, prompt, model, resolution, aspect_ratio, num_images,
                  seed, output_format,
-                 image_1=None, image_2=None, image_3=None, image_4=None, image_5=None):
+                 image_1=None, image_2=None, image_3=None, image_4=None, image_5=None,
+                 image_6=None, image_7=None, image_8=None, image_9=None, image_10=None):
         key = api.get_api_key()
         if not key:
             raise RuntimeError("No WaveSpeed API key found. Add it to .env as wavespeed= or WAVESPEED_API_KEY=")
 
-        # Collect reference images (any subset of the 5 inputs)
-        ref_tensors = [t for t in (image_1, image_2, image_3, image_4, image_5) if t is not None]
+        # Collect reference images (any subset of the 10 inputs)
+        ref_tensors = [t for t in (image_1, image_2, image_3, image_4, image_5,
+                                    image_6, image_7, image_8, image_9, image_10) if t is not None]
+
+        # Warn if user exceeds the model's documented limit
+        if "nano-banana-2" in model and len(ref_tensors) > 8:
+            print(f"[WaveSpeed] WARNING: Nano Banana 2 supports up to 8 reference images; you connected {len(ref_tensors)}. The API may reject or truncate.")
 
         # Upload references ONCE, reuse URLs across all variations
         ref_urls = []
@@ -255,17 +268,20 @@ class WS_GPTImage2:
                 "image_2": ("IMAGE",),
                 "image_3": ("IMAGE",),
                 "image_4": ("IMAGE",),
+                "image_5": ("IMAGE",),
+                "image_6": ("IMAGE",),
             },
         }
 
     def generate(self, prompt, quality, resolution, aspect_ratio, num_images, seed,
-                 image_1=None, image_2=None, image_3=None, image_4=None):
+                 image_1=None, image_2=None, image_3=None, image_4=None,
+                 image_5=None, image_6=None):
         key = api.get_api_key()
         if not key:
             raise RuntimeError("No WaveSpeed API key found.")
 
         # Collect any provided reference images
-        ref_imgs = [t for t in (image_1, image_2, image_3, image_4) if t is not None]
+        ref_imgs = [t for t in (image_1, image_2, image_3, image_4, image_5, image_6) if t is not None]
 
         # Upload references once (reuse URLs across all num_images)
         ref_urls = []

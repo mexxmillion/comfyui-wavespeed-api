@@ -137,7 +137,7 @@ function gptImage2Cost(node) {
   const res     = getW(node, "resolution") ?? "1k";
   const n       = getW(node, "num_images") ?? 1;
   // Detect edit mode: any image_N input is connected
-  const isEdit  = ["image_1", "image_2", "image_3", "image_4"].some(
+  const isEdit  = ["image_1", "image_2", "image_3", "image_4", "image_5", "image_6"].some(
     name => node.inputs?.find(i => i.name === name)?.link != null
   );
   const table = isEdit ? GPT_IMAGE_COSTS.edit : GPT_IMAGE_COSTS.t2i;
