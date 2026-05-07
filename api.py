@@ -149,11 +149,24 @@ def video_input_to_path(video) -> str:
 
 
 def tensor_to_pil(image_tensor) -> Image.Image:
-    # ComfyUI IMAGE: [B, H, W, C] float32 0-1
+    # ComfyUI IMAGE: [B, H, W, C] float32 0-1. Returns the FIRST image only.
     if image_tensor.dim() == 4:
         image_tensor = image_tensor[0]
     arr = (image_tensor.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
     return Image.fromarray(arr, "RGB")
+
+
+def tensor_batch_to_pils(image_tensor) -> list:
+    """Convert a ComfyUI IMAGE tensor (possibly batched) into a list of PIL Images."""
+    if image_tensor is None:
+        return []
+    if image_tensor.dim() == 3:
+        image_tensor = image_tensor.unsqueeze(0)
+    pils = []
+    for i in range(image_tensor.shape[0]):
+        arr = (image_tensor[i].cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
+        pils.append(Image.fromarray(arr, "RGB"))
+    return pils
 
 
 def url_to_tensor(url: str):

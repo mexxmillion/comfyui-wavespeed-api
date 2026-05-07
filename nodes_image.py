@@ -58,15 +58,14 @@ NANO_MODELS_T2I = [m.replace("/edit-ultra", "/text-to-image")
 
 
 class WS_NanaBananaImage:
-    """Nano Banana 2/Pro. Connect any of image_1..image_10 to switch to multi-ref edit mode.
-    NB2 accepts up to 8 reference images; NB Pro up to 14 (this node exposes 10 — covers
-    nearly all real workflows: ~5 characters + ~5 objects).
-    Multi-ref input = ONE call, ONE cost. num_images controls how many variations are
-    generated, each as a separate API call (Nx cost)."""
+    """Nano Banana 2/Pro. Connect a (batched) IMAGE to `images` for multi-ref edit mode.
+    Use `Image Batch Multi` (kjnodes) or any node that combines images to send multiple refs.
+    NB2 supports up to 8 reference images; NB Pro up to 14.
+    Multi-ref input = ONE call, ONE cost. num_images = N separate calls (Nx cost)."""
     CATEGORY = "WaveSpeed API"
     FUNCTION = "generate"
     RETURN_TYPES = ("IMAGE", "STRING")
-    RETURN_NAMES = ("images", "cost")
+    RETURN_NAMES = ("images_out", "cost")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -82,40 +81,24 @@ class WS_NanaBananaImage:
                 "output_format":(["png", "jpeg"],),
             },
             "optional": {
-                "image_1":  ("IMAGE",),
-                "image_2":  ("IMAGE",),
-                "image_3":  ("IMAGE",),
-                "image_4":  ("IMAGE",),
-                "image_5":  ("IMAGE",),
-                "image_6":  ("IMAGE",),
-                "image_7":  ("IMAGE",),
-                "image_8":  ("IMAGE",),
-                "image_9":  ("IMAGE",),
-                "image_10": ("IMAGE",),
+                "images": ("IMAGE", {"tooltip": "Reference image(s). Can be a batch — feed multiple refs via Image Batch Multi."}),
             },
         }
 
     def generate(self, prompt, model, resolution, aspect_ratio, num_images,
-                 seed, output_format,
-                 image_1=None, image_2=None, image_3=None, image_4=None, image_5=None,
-                 image_6=None, image_7=None, image_8=None, image_9=None, image_10=None):
+                 seed, output_format, images=None):
         key = api.get_api_key()
         if not key:
             raise RuntimeError("No WaveSpeed API key found. Add it to .env as wavespeed= or WAVESPEED_API_KEY=")
 
-        # Collect reference images (any subset of the 10 inputs)
-        ref_tensors = [t for t in (image_1, image_2, image_3, image_4, image_5,
-                                    image_6, image_7, image_8, image_9, image_10) if t is not None]
-
-        # Warn if user exceeds the model's documented limit
-        if "nano-banana-2" in model and len(ref_tensors) > 8:
-            print(f"[WaveSpeed] WARNING: Nano Banana 2 supports up to 8 reference images; you connected {len(ref_tensors)}. The API may reject or truncate.")
+        ref_pils = api.tensor_batch_to_pils(images)
+        if "nano-banana-2" in model and len(ref_pils) > 8:
+            print(f"[WaveSpeed] WARNING: Nano Banana 2 supports up to 8 reference images; you provided {len(ref_pils)}. The API may reject or truncate.")
+        if "nano-banana-pro" in model and len(ref_pils) > 14:
+            print(f"[WaveSpeed] WARNING: Nano Banana Pro supports up to 14 reference images; you provided {len(ref_pils)}.")
 
         # Upload references ONCE, reuse URLs across all variations
-        ref_urls = []
-        for tensor in ref_tensors:
-            pil = api.tensor_to_pil(tensor)
-            ref_urls.append(api.upload_image(pil, key))
+        ref_urls = [api.upload_image(p, key) for p in ref_pils]
 
         is_edit = len(ref_urls) > 0
         if is_edit:
@@ -245,12 +228,12 @@ GPT_RESOLUTIONS = ["1k", "2k", "4k"]
 
 
 class WS_GPTImage2:
-    """OpenAI GPT Image 2 — text-to-image (no image input) or edit (one+ image inputs).
-    Up to 4 reference images can be supplied to the edit endpoint."""
+    """OpenAI GPT Image 2 — text-to-image (no images) or edit (batched IMAGE input).
+    Connect multiple refs via Image Batch Multi (kjnodes) for multi-image edit."""
     CATEGORY = "WaveSpeed API"
     FUNCTION = "generate"
     RETURN_TYPES = ("IMAGE", "STRING")
-    RETURN_NAMES = ("images", "cost")
+    RETURN_NAMES = ("images_out", "cost")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -260,35 +243,22 @@ class WS_GPTImage2:
                 "quality":      (GPT_QUALITIES,),
                 "resolution":   (GPT_RESOLUTIONS,),
                 "aspect_ratio": (ASPECT_RATIOS,),
-                "num_images":   ("INT", {"default": 1, "min": 1, "max": 4, "step": 1}),
+                "num_images":   ("INT", {"default": 1, "min": 1, "max": 4, "step": 1,
+                                          "tooltip": "Number of variations — each is a separate API call (Nx cost)"}),
                 "seed":         ("INT", {"default": -1, "min": -1, "max": 2**31 - 1}),
             },
             "optional": {
-                "image_1": ("IMAGE",),
-                "image_2": ("IMAGE",),
-                "image_3": ("IMAGE",),
-                "image_4": ("IMAGE",),
-                "image_5": ("IMAGE",),
-                "image_6": ("IMAGE",),
+                "images": ("IMAGE", {"tooltip": "Reference image(s). Can be a batch — feed multiple refs via Image Batch Multi."}),
             },
         }
 
-    def generate(self, prompt, quality, resolution, aspect_ratio, num_images, seed,
-                 image_1=None, image_2=None, image_3=None, image_4=None,
-                 image_5=None, image_6=None):
+    def generate(self, prompt, quality, resolution, aspect_ratio, num_images, seed, images=None):
         key = api.get_api_key()
         if not key:
             raise RuntimeError("No WaveSpeed API key found.")
 
-        # Collect any provided reference images
-        ref_imgs = [t for t in (image_1, image_2, image_3, image_4, image_5, image_6) if t is not None]
-
-        # Upload references once (reuse URLs across all num_images)
-        ref_urls = []
-        if ref_imgs:
-            for tensor in ref_imgs:
-                pil = api.tensor_to_pil(tensor)
-                ref_urls.append(api.upload_image(pil, key))
+        ref_pils = api.tensor_batch_to_pils(images)
+        ref_urls = [api.upload_image(p, key) for p in ref_pils]
 
         is_edit = len(ref_urls) > 0
         endpoint = "openai/gpt-image-2/edit" if is_edit else "openai/gpt-image-2/text-to-image"
